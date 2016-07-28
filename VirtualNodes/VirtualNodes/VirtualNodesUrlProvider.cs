@@ -6,8 +6,10 @@ using Umbraco.Core.Models;
 using Umbraco.Web;
 using Umbraco.Web.Routing;
 
+
 namespace DotSee.VirtualNodes
 {
+#pragma warning disable CS0618 // Type or member is obsolete
     public class VirtualNodesUrlProvider : DefaultUrlProvider
     {
         //V8 will use the constructor below, doesn't seem to work for the time being. A warning is being thrown during compilation
@@ -29,24 +31,36 @@ namespace DotSee.VirtualNodes
             //Just in case
             if (content == null) { return null; }
 
-            //If this is a virtual node itself, no need to handle it - should return normal URL
-
-            bool hasVirtualNodeInPath = false;
-            foreach (IPublishedContent item in content.Ancestors()) //.Union(content.Children())
-            {
-                if (item.IsVirtualNode())
-                {
-                    hasVirtualNodeInPath = true;
-                    break;
-                }
-            }
+            // .Ancestors() is a possible expensive operation
+            var hasVirtualNodeInPath = HasVirtualNodeInPath(content);
 
             return (hasVirtualNodeInPath ? ConstructUrl(umbracoContext, id, current, mode, content) : null);
 
         }
 
-        private string ConstructUrl(UmbracoContext umbracoContext, int id, Uri current, UrlProviderMode mode, IPublishedContent content)
+        private static bool HasVirtualNodeInPath(IPublishedContent content)
         {
+            //If this is a virtual node itself, no need to handle it - should return normal URL
+            string cacheKey = "HasVirtualNodeInPath-" + content.Id;
+
+            var cacheObject = UmbracoContext.Current.Application.ApplicationCache.RuntimeCache.GetCacheItem(cacheKey,
+                () =>
+                {
+                    bool hasVirtualNodeInPath = false;
+                    foreach (IPublishedContent item in content.Ancestors()) //.Union(content.Children())
+                    {
+                        if (item.IsVirtualNode())
+                        {
+                            hasVirtualNodeInPath = true;
+                            break;
+                        }
+                    }
+                    return hasVirtualNodeInPath;
+                });
+            return (bool) cacheObject;
+        }
+
+        private string ConstructUrl(UmbracoContext umbracoContext, int id, Uri current, UrlProviderMode mode, IPublishedContent content)        {
 
             string path = content.Path;
 
@@ -64,7 +78,7 @@ namespace DotSee.VirtualNodes
             //DO NOT USE THIS - RECURSES: string url = content.Url;
             //https://our.umbraco.org/forum/developers/extending-umbraco/73533-custom-url-provider-stackoverflowerror
             //https://our.umbraco.org/forum/developers/extending-umbraco/66741-iurlprovider-cannot-evaluate-expression-because-the-current-thread-is-in-a-stack-overflow-state
-            string url = base.GetUrl(umbracoContext, id, current, mode);
+            string url = base.GetUrl(umbracoContext, id, current, UrlProviderMode.Relative);
 
             //Strip leading and trailing slashes 
             if ((url.EndsWith("/")))
@@ -108,8 +122,27 @@ namespace DotSee.VirtualNodes
                 finalUrl = "/" + finalUrl;
             }
 
+            Uri uri;
+            if (mode == UrlProviderMode.AutoLegacy)
+                mode = UrlProviderMode.Auto;
+
+            switch (mode)
+            {
+
+                case UrlProviderMode.Relative:
+                case UrlProviderMode.Auto:
+                    uri = new Uri(finalUrl, UriKind.Relative);
+                    break;
+                case UrlProviderMode.Absolute:
+                    uri = new Uri(current.GetLeftPart(UriPartial.Authority) + finalUrl);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException("mode");
+            }
+
             //Voila.
-            return (finalUrl);
+            return uri.ToString();
         }
     }
+#pragma warning restore CS0618 // Type or member is obsolete
 }
